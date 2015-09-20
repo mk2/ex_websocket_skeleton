@@ -8,8 +8,8 @@ defmodule Wsserv.Supervisor do
   # API functions #
   #################
 
-  def start_link(handlers) do
-    Supervisor.start_link(__MODULE__, handlers)
+  def start_link(handler) do
+    Supervisor.start_link(__MODULE__, handler)
   end
 
   def start_wsserv() do
@@ -21,13 +21,13 @@ defmodule Wsserv.Supervisor do
   # Superviser callbacks #
   ########################
 
-  def init(handlers) do
+  def init(handler) do
     Logger.metadata tag: @tag
     Logger.debug "init in"
     port = Application.get_env(:ex_websocket_skeleton, :port, 8081)
     {:ok, lsock} = Wsserv.Util.get_lsock(port)
     spawn_link &empty_wsservs/0
-    [worker(Wsserv, [lsock, handlers], restart: :temporary)] |> supervise(strategy: :simple_one_for_one)
+    [worker(Wsserv, [lsock, handler], restart: :temporary)] |> supervise(strategy: :simple_one_for_one)
   end
 
   ####################

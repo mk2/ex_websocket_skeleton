@@ -1,7 +1,29 @@
 defmodule Wsserv do
   use GenServer
+  require Bitwise
   require Logger
   require Record
+
+  @doc """
+   0                   1                   2                   3
+   0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
+  +-+-+-+-+-------+-+-------------+-------------------------------+
+  |F|R|R|R| opcode|M| Payload len |    Extended payload length    |
+  |I|S|S|S|  (4)  |A|     (7)     |             (16/64)           |
+  |N|V|V|V|       |S|             |   (if payload len==126/127)   |
+  | |1|2|3|       |K|             |                               |
+  +-+-+-+-+-------+-+-------------+ - - - - - - - - - - - - - - - +
+  |     Extended payload length continued, if payload len == 127  |
+  + - - - - - - - - - - - - - - - +-------------------------------+
+  |                               |Masking-key, if MASK set to 1  |
+  +-------------------------------+-------------------------------+
+  | Masking-key (continued)       |          Payload Data         |
+  +-------------------------------- - - - - - - - - - - - - - - - +
+  :                     Payload Data continued ...                :
+  + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
+  |                     Payload Data continued ...                |
+  +---------------------------------------------------------------+
+  """
 
   @tag Atom.to_string(__MODULE__)
 
@@ -31,28 +53,28 @@ defmodule Wsserv do
   @max_unsigned_integer_64  9223372036854775807
 
   Record.defrecord :dataframe,
-    fin: @fin_off,
-    rsv1: @rsv_off, rsv2: @rsv_off, rsv3: @rsv_off,
-    opcode: @opcode_text,
-    mask: @mask_off,
-    pllen: 0x0,
+    fin:     @fin_off,
+    rsv1:    @rsv_off, rsv2: @rsv_off, rsv3: @rsv_off,
+    opcode:  @opcode_text,
+    mask:    @mask_off,
+    pllen:   0x0,
     maskkey: 0x0,
-    data: nil,
-    msg: nil
+    data:    nil,
+    msg:     nil
 
   Record.defrecord :servstat,
-    lsock: nil,
-    csock: nil,
-    puid: nil,
+    lsock:     nil,
+    csock:     nil,
+    puid:      nil,
     dataframe: nil,
-    handlers: nil
+    handler:  nil
 
   #################
   # API Functions #
   #################
 
-  def start_link(lsock, handlers) do
-    GenServer.start_link(__MODULE__, [lsock, handlers])
+  def start_link(lsock, handler) do
+    GenServer.start_link(__MODULE__, [lsock, handler])
   end
 
   #######################
@@ -61,18 +83,21 @@ defmodule Wsserv do
 
   @doc """
   """
-  def init([lsock, handlers]) do
+  def init([lsock, handler]) do
     Logger.metadata tag: @tag
     Logger.debug "init in"
     Process.flag :trap_exit, true
     GenServer.cast self, :accept
-    {:ok, servstat(lsock: lsock, handlers: handlers)}
+    {:ok, servstat(lsock: lsock, handler: handler)}
   end
 
   @doc """
   """
-  def handle_info({:tcp, _, _msg}, state) do
-    {:noreply, servstat(state, dataframe: nil)}
+  def handle_info({:tcp, _, msg}, state) do
+    dataframe = decode_dataframe(msg)
+    :io.format("dataframe: ~p~n", [dataframe])
+    IO.puts dataframe(dataframe, :data)
+    {:noreply, servstat(state, dataframe: dataframe)}
   end
 
   @doc """
@@ -157,8 +182,141 @@ defmodule Wsserv do
     swkey <> @websocket_append_to_key |> (fn(k) -> :crypto.hash(:sha, k) end).() |> :base64.encode_to_string() |> List.to_string()
   end
 
-  defp extract_mask_key(rawmsg) do
+  defp decode_dataframe(rawmsg) do
+    <<fin :: size(1),
+      rsv1 :: size(1),
+      rsv2 :: size(1),
+      rsv3 :: size(1),
+      opcode :: size(4),
+      mask :: size(1),
+      payloadLen :: size(7),
+      remainmsg :: binary>> = rawmsg
+    cond do
+      payloadLen <= @payload_length_normal and mask === @mask_on ->
+        Logger.debug "payload: normal & mask: on"
+        {maskkey, data} = remainmsg |> extract_mask_key() |> apply_mask()
+        dataframe(fin: fin,
+                  rsv1: rsv1,
+                  rsv2: rsv2,
+                  rsv3: rsv3,
+                  opcode: opcode,
+                  mask: mask,
+                  maskkey: maskkey,
+                  pllen: payloadLen,
+                  data: data,
+                  msg: rawmsg)
+      payloadLen <= @payload_length_normal and mask === @mask_off ->
+        Logger.debug "payload: normal & mask: off"
+        dataframe(fin: fin,
+                  rsv1: rsv1,
+                  rsv2: rsv2,
+                  rsv3: rsv3,
+                  opcode: opcode,
+                  mask: mask,
+                  maskkey: nil,
+                  pllen: payloadLen,
+                  data: remainmsg,
+                  msg: rawmsg)
+      payloadLen === @payload_length_extend_16 and mask === @mask_on ->
+        Logger.debug "payload: extend 16 & mask: on"
+        {payloadLen16, remainmsg2} = extract_extend_payload_length_16(remainmsg)
+        {maskkey, data} = remainmsg2 |> extract_mask_key() |> apply_mask()
+        dataframe(fin: fin,
+                  rsv1: rsv1,
+                  rsv2: rsv2,
+                  rsv3: rsv3,
+                  opcode: opcode,
+                  mask: mask,
+                  maskkey: maskkey,
+                  pllen: payloadLen16,
+                  data: data,
+                  msg: rawmsg)
+      payloadLen === @payload_length_extend_16 and mask === @mask_off ->
+        Logger.debug "payload: extend 16 & mask: off"
+        {payloadLen16, remainmsg2} = extract_extend_payload_length_16(remainmsg)
+        dataframe(fin: fin,
+                  rsv1: rsv1,
+                  rsv2: rsv2,
+                  rsv3: rsv3,
+                  opcode: opcode,
+                  mask: mask,
+                  maskkey: nil,
+                  pllen: payloadLen16,
+                  data: remainmsg2,
+                  msg: rawmsg)
+      payloadLen === @payload_length_extend_64 and mask === @mask_on ->
+        Logger.debug "payload: extend 64 & mask: on"
+        {payloadLen64, remainmsg2} = extract_extend_payload_length_64(remainmsg)
+        {maskkey, data} = remainmsg2 |> extract_mask_key() |> apply_mask()
+        dataframe(fin: fin,
+                  rsv1: rsv1,
+                  rsv2: rsv2,
+                  rsv3: rsv3,
+                  opcode: opcode,
+                  mask: mask,
+                  maskkey: maskkey,
+                  pllen: payloadLen64,
+                  data: data,
+                  msg: rawmsg)
+      payloadLen === @payload_length_extend_64 and mask === @mask_off ->
+        Logger.debug "payload: extend 64 & mask: off"
+        {payloadLen64, remainmsg2} = extract_extend_payload_length_16(remainmsg)
+        dataframe(fin: fin,
+                  rsv1: rsv1,
+                  rsv2: rsv2,
+                  rsv3: rsv3,
+                  opcode: opcode,
+                  mask: mask,
+                  maskkey: nil,
+                  pllen: payloadLen64,
+                  data: remainmsg2,
+                  msg: rawmsg)
+      true -> raise "unknown payload"
+    end
+  end
 
+  defp extract_mask_key(rawmsg) do
+    <<maskkey :: binary - size(4),
+      remainmsg :: binary>> = rawmsg
+    {maskkey, remainmsg}
+  end
+
+  defp extract_extend_payload_length_16(rawmsg) do
+    <<len :: unsigned - integer - size(16),
+      remainmsg :: binary>> = rawmsg
+    {len, remainmsg}
+  end
+
+  defp extract_extend_payload_length_64(rawmsg) do
+    <<len :: unsigned - integer - size(64),
+      remainmsg :: binary>> = rawmsg
+    {len, remainmsg}
+  end
+
+  defp apply_mask({maskkey, remainmsg}) do
+    :io.format("maskkey: ~p~n", [maskkey])
+    :io.format("remainmsg: ~p~n", [remainmsg])
+    msgsize = byte_size(remainmsg)
+    msgsizetrun = trunc(msgsize / 4)
+    msgsizerem = rem(msgsize, 4)
+    <<msk1 :: size(8),
+      msk2 :: size(8),
+      msk3 :: size(8),
+      msk4 :: size(8)>> = maskkey
+    lastMaskkeyList = case msgsizerem do
+                        1 -> [msk1]
+                        2 -> [msk1, msk2]
+                        3 -> [msk1, msk2, msk3]
+                        _ -> []
+                      end
+    maskkeyList = [msk1, msk2, msk3, msk4] |> List.duplicate(msgsizetrun)
+                                           |> List.flatten(lastMaskkeyList)
+    remainmsgList = :binary.bin_to_list(remainmsg)
+    IO.inspect({:remainmsgList, remainmsgList})
+    IO.inspect({:maskkeyList, maskkeyList})
+    valmaskeds = for {val, mask} <- List.zip([remainmsgList, maskkeyList]), do: Bitwise.bxor(val, mask)
+    maskedremainmsg = valmaskeds |> List.flatten(lastMaskkeyList) |> :binary.list_to_bin()
+    {maskkey, maskedremainmsg}
   end
 
 end
