@@ -118,7 +118,7 @@ defmodule Wsserv do
 
   defp do_handshake(csock, headers) do
     case :gen_tcp.recv(csock, 0) do
-      {:ok, {:http_request, _method, {:abs_path, path}, _version}} -> do_handshake(csock, Dict.put(headers, :path, path))
+      {:ok, {:http_request, _, {:abs_path, path}, _}} -> do_handshake(csock, Dict.put(headers, :path, path))
       {:ok, {:http_header, _, httpField, _, value}} ->
         hkey = {:http_field, httpField}
         do_handshake(csock, Dict.put(headers, hkey, value))
@@ -134,11 +134,12 @@ defmodule Wsserv do
   end
 
   defp verify_handshake(csock, headers) do
+    :io.format("headers: ~p~n", [headers])
     try do
-      "websocoket" = Dict.get(headers, {:http_field, :'Upgrade'}, "") |> String.downcase()
-      "upgrade" = Dict.get(headers, {:http_field, :'Connection'}, "") |> String.downcase()
-      "13" = Dict.get(headers, {:http_field, :'Sec-Websocket-Version'}, "") |> String.downcase()
-      true = Dict.has_key?(headers, {:http_field, :'Sec-Websocket-Key'})
+      "websocket" = Dict.get(headers, {:http_field, :'Upgrade'}, '') |> List.to_string |> String.downcase()
+      "upgrade" = Dict.get(headers, {:http_field, :'Connection'}, '') |> List.to_string |> String.downcase()
+      "13" = Dict.get(headers, {:http_field, 'Sec-Websocket-Version'}, '') |> List.to_string()
+      true = Dict.has_key?(headers, {:http_field, 'Sec-Websocket-Key'})
       send_handshake(csock, headers)
     catch
       _ -> Logger.error "an error during verification handshake"
@@ -146,14 +147,14 @@ defmodule Wsserv do
   end
 
   defp send_handshake(csock, headers) do
-    swkey = Dict.get(headers, {:http_field, :'Sec-Websocket-Key'}, "")
+    swkey = Dict.get(headers, {:http_field, 'Sec-Websocket-Key'}, '') |> List.to_string()
     acceptHeader = swkey |> make_accept_header_value
                          |> (fn(acceptHeaderValue) -> @websocket_prefix <> acceptHeaderValue <> "\r\n\r\n" end).()
     :gen_tcp.send(csock, acceptHeader)
   end
 
   defp make_accept_header_value(swkey) do
-    swkey <> @websocket_append_to_key |> (fn(k) -> :crypto.hash(:sha, k) end).() |> :base64.encode_to_string()
+    swkey <> @websocket_append_to_key |> (fn(k) -> :crypto.hash(:sha, k) end).() |> :base64.encode_to_string() |> List.to_string()
   end
 
   defp extract_mask_key(rawmsg) do
