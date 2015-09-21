@@ -67,14 +67,19 @@ defmodule Wsserv do
     csock:     nil,
     puid:      nil,
     dataframe: nil,
-    handler:  nil
+    hdlpid:    nil,
+    body:      nil
 
   #################
   # API Functions #
   #################
 
-  def start_link(lsock, handler) do
-    GenServer.start_link(__MODULE__, [lsock, handler])
+  def start_link(lsock, body) do
+    GenServer.start_link(__MODULE__, [lsock, body])
+  end
+
+  def send do
+
   end
 
   #######################
@@ -83,12 +88,13 @@ defmodule Wsserv do
 
   @doc """
   """
-  def init([lsock, handler]) do
+  def init([lsock, body]) do
     Logger.metadata tag: @tag
-    Logger.debug "init in"
+    Logger.debug "Wsserv start"
+    {:ok, hdlpid} = Wsserv.Handler.start_link(self, body)
     Process.flag :trap_exit, true
     GenServer.cast self, :accept
-    {:ok, servstat(lsock: lsock, handler: handler)}
+    {:ok, servstat(lsock: lsock, hdlpid: hdlpid, body: body)}
   end
 
   @doc """
@@ -97,6 +103,7 @@ defmodule Wsserv do
     dataframe = decode_dataframe(msg)
     :io.format("dataframe: ~p~n", [dataframe])
     IO.puts dataframe(dataframe, :data)
+    :inet.setopts(servstat(state, :csock), [active: :once])
     {:noreply, servstat(state, dataframe: dataframe)}
   end
 

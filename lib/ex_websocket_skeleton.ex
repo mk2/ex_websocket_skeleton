@@ -1,6 +1,10 @@
 defmodule ExWebsocketSkeleton do
 
-  def start do
+  def start_link do
+  end
+
+  def send do
+
   end
 
 
