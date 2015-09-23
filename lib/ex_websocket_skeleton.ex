@@ -1,9 +1,9 @@
 defmodule ExWebsocketSkeleton do
 
-  def start_link do
+  def start_link(body, options \\ []) do
   end
 
-  def send do
+  def send(wsservpid, envl) do
 
   end
 

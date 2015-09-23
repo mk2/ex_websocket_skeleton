@@ -1,5 +1,6 @@
 defmodule Wsserv do
   use GenServer
+  alias Wsserv.Handler
   require Bitwise
   require Logger
   require Record
@@ -23,6 +24,11 @@ defmodule Wsserv do
   + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
   |                     Payload Data continued ...                |
   +---------------------------------------------------------------+
+
+  TODO List
+  - opcodeの分岐を追加
+   - pingの場合はwsserv内で処理、それ以外は基本handlerに知らせる
+  - decode_dataframeが常に動くようにする
   """
 
   @tag Atom.to_string(__MODULE__)
@@ -30,11 +36,11 @@ defmodule Wsserv do
   @websocket_prefix        "HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: upgrade\r\nSec-Websocket-Accept: "
   @websocket_append_to_key "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
-  @fin_on  0x1
-  @fin_off 0x0
+  @fin_on  0b1
+  @fin_off 0b0
 
-  @rsv_on  0x1
-  @rsv_off 0x0
+  @rsv_on  0b1
+  @rsv_off 0b0
 
   @opcode_continue 0x0
   @opcode_text     0x1
@@ -43,8 +49,8 @@ defmodule Wsserv do
   @opcode_ping     0x9
   @opcode_pong     0xA
 
-  @mask_on  0x1
-  @mask_off 0x0
+  @mask_on  0b1
+  @mask_off 0b0
 
   @payload_length_normal    125
   @payload_length_extend_16 126
@@ -91,7 +97,7 @@ defmodule Wsserv do
   def init([lsock, body]) do
     Logger.metadata tag: @tag
     Logger.debug "Wsserv start"
-    {:ok, hdlpid} = Wsserv.Handler.start_link(self, body)
+    {:ok, hdlpid} = Handler.start_link(self, body)
     Process.flag :trap_exit, true
     GenServer.cast self, :accept
     {:ok, servstat(lsock: lsock, hdlpid: hdlpid, body: body)}
@@ -99,12 +105,33 @@ defmodule Wsserv do
 
   @doc """
   """
-  def handle_info({:tcp, _, msg}, state) do
+  def handle_info({:tcp, _, msg}, state = servstat(csock: csock)) do
     dataframe = decode_dataframe(msg)
     :io.format("dataframe: ~p~n", [dataframe])
     IO.puts dataframe(dataframe, :data)
     :inet.setopts(servstat(state, :csock), [active: :once])
-    {:noreply, servstat(state, dataframe: dataframe)}
+    data = dataframe(dataframe, :data)
+    hdlpid = servstat(state, :hdlpid)
+    case dataframe(dataframe, :opcode) do
+      @opcode_text ->
+        Handler.notify_text(hdlpid, data)
+        {:noreply, servstat(state, dataframe: dataframe)}
+      @opcode_bin ->
+        Handler.notify_bin(hdlpid, data)
+        {:noreply, servstat(state, dataframe: dataframe)}
+      @opcode_ping ->
+        Logger.debug "found ping dataframe"
+        # not implemeted
+        {:noreply, servstat(state, dataframe: dataframe)}
+      @opcode_continue ->
+        Logger.debug "found continue dataframe"
+        # not implemented
+        {:noreply, servstat(state, dataframe: dataframe)}
+      @opcode_close ->
+        :gen_tcp.close(csock)
+        Handler.notify_close(hdlpid)
+        {:stop, :close_request, state}
+    end
   end
 
   @doc """
@@ -131,9 +158,9 @@ defmodule Wsserv do
 
   @doc """
   """
-  def handle_cast(:accept, state) do
+  def handle_cast(:accept, state = servstat(lsock: lsock)) do
     Logger.debug "waiting for connection"
-    {:ok, csock} = :gen_tcp.accept(servstat(state, :lsock))
+    {:ok, csock} = :gen_tcp.accept(lsock)
     case do_handshake(csock, HashDict.new) do
       {:ok, _} ->
         Logger.info "handshake passed"
@@ -187,6 +214,16 @@ defmodule Wsserv do
 
   defp make_accept_header_value(swkey) do
     swkey <> @websocket_append_to_key |> (fn(k) -> :crypto.hash(:sha, k) end).() |> :base64.encode_to_string() |> List.to_string()
+  end
+
+  defp encode_dataframe(data, opts = %{opcode: opcode, mask: mask}) do
+    dataByteSize = byte_size(data)
+    finRsvOpcode = Bitwise.bor(0b10000000, opcode)
+  end
+
+  defp encode_dataframe(data, opts = %{opcode: opcode}) do
+    dataByteSize = byte_size(data)
+    finRsvOpcode = Bitwise.bor(0b10000000, opcode)
   end
 
   defp decode_dataframe(rawmsg) do
