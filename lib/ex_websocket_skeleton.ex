@@ -1,10 +1,12 @@
 defmodule ExWebsocketSkeleton do
+  alias Wsserv.Supervisor
 
-  def start_link(body, options \\ []) do
+  def start_link(body) do
+    Supervisor.start_link(body)
   end
 
-  def send(wsservpid, envl) do
-
+  def send_text(wsservpid, text) do
+    Wsserv.send_text(wsservpid, text)
   end
 
 

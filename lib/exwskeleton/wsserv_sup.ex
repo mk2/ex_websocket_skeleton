@@ -9,11 +9,13 @@ defmodule Wsserv.Supervisor do
   #################
 
   def start_link(body) do
-    Supervisor.start_link(__MODULE__, body)
+    Supervisor.start_link(__MODULE__, [body], [name: __MODULE__])
   end
 
   def start_wsserv() do
+    Logger.debug "start_wsserv in"
     Supervisor.start_child(__MODULE__, [])
+    Logger.debug "start_wsserv out"
   end
 
 
@@ -21,13 +23,14 @@ defmodule Wsserv.Supervisor do
   # Superviser callbacks #
   ########################
 
-  def init(body) do
+  def init([body]) do
     Logger.metadata tag: @tag
     Logger.debug "init in"
     port = Application.get_env(:ex_websocket_skeleton, :port, 8081)
     {:ok, lsock} = Wsserv.Util.get_lsock(port)
     spawn_link &empty_wsservs/0
-    [worker(Wsserv, [lsock, body], restart: :temporary)] |> supervise(strategy: :simple_one_for_one)
+    children = [worker(Wsserv, [lsock, body], restart: :temporary)]
+    supervise(children, strategy: :simple_one_for_one)
   end
 
   ####################

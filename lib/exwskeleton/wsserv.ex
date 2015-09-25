@@ -1,6 +1,7 @@
 defmodule Wsserv do
   use GenServer
   alias Wsserv.Handler
+  alias Wsserv.Supervisor
   require Bitwise
   require Logger
   require Record
@@ -172,6 +173,7 @@ defmodule Wsserv do
       {:ok, _} ->
         Logger.info "handshake passed"
         :inet.setopts(csock, [packet: :raw, active: :once])
+        Supervisor.start_wsserv
         {:noreply, servstat(state, csock: csock)}
       {:stop, reason, _} -> {:stop, reason, state}
       _ -> {:stop, "failed handshake with unknown reason", state}
