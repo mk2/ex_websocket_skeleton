@@ -1,7 +1,7 @@
-defmodule Wsserv do
+defmodule ExWebsocketSkeleton.Wsserv do
   use GenServer
-  alias Wsserv.Handler
-  alias Wsserv.Supervisor
+  alias ExWebsocketSkeleton.Wsserv.Handler
+  alias ExWebsocketSkeleton.Wsserv.Supervisor
   require Bitwise
   require Logger
   require Record

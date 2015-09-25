@@ -1,5 +1,6 @@
 defmodule ExWebsocketSkeleton do
-  alias Wsserv.Supervisor
+  alias ExWebsocketSkeleton.Wsserv
+  alias ExWebsocketSkeleton.Wsserv.Supervisor
 
   def start_link(body) do
     Supervisor.start_link(body)

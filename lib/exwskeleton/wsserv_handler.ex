@@ -1,4 +1,4 @@
-defmodule Wsserv.Handler do
+defmodule ExWebsocketSkeleton.Wsserv.Handler do
   use GenEvent
   require Logger
   require Record

@@ -1,5 +1,7 @@
-defmodule Wsserv.Supervisor do
+defmodule ExWebsocketSkeleton.Wsserv.Supervisor do
   use Supervisor
+  alias ExWebsocketSkeleton.Wsserv
+  alias ExWebsocketSkeleton.Wsserv.Util
   require Logger
 
   @tag Atom.to_string(__MODULE__)
@@ -27,7 +29,7 @@ defmodule Wsserv.Supervisor do
     Logger.metadata tag: @tag
     Logger.debug "init in"
     port = Application.get_env(:ex_websocket_skeleton, :port, 8081)
-    {:ok, lsock} = Wsserv.Util.get_lsock(port)
+    {:ok, lsock} = Util.get_lsock(port)
     spawn_link &empty_wsservs/0
     children = [worker(Wsserv, [lsock, body], restart: :temporary)]
     supervise(children, strategy: :simple_one_for_one)
