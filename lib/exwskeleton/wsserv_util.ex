@@ -5,7 +5,7 @@ defmodule Wsserv.Util do
   end
 
   def get_echo_handler() do
-    %{handle_text: fn(_wsservpid, _data) -> "### TEXT" end,
+    %{handle_text: fn(_wsservpid, _data) -> IO.puts "### TEXT" end,
       handle_bin: fn(_, _) -> IO.puts "### BIN" end,
       handle_close: fn() -> IO.puts "### CLOSE" end}
   end
