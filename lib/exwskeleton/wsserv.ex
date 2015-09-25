@@ -71,7 +71,6 @@ defmodule Wsserv do
   Record.defrecord :servstat,
     lsock:     nil,
     csock:     nil,
-    puid:      nil,
     dataframe: nil,
     hdlpid:    nil,
     body:      nil
@@ -84,8 +83,16 @@ defmodule Wsserv do
     GenServer.start_link(__MODULE__, [lsock, body])
   end
 
-  def send do
+  def send_text(wsservpid, data) do
+    GenServer.cast(wsservpid, {:send, @opcode_text, data})
+  end
 
+  def send_close(wsservpid) do
+    GenServer.cast(wsservpid, {:send, @opcode_close, ""})
+  end
+
+  def send_pong(wsservpid) do
+    GenServer.cast(wsservpid, {:send, @opcode_pong, ""})
   end
 
   #######################
@@ -121,7 +128,7 @@ defmodule Wsserv do
         {:noreply, servstat(state, dataframe: dataframe)}
       @opcode_ping ->
         Logger.debug "found ping dataframe"
-        # not implemeted
+        send_pong(self)
         {:noreply, servstat(state, dataframe: dataframe)}
       @opcode_continue ->
         Logger.debug "found continue dataframe"
@@ -171,6 +178,23 @@ defmodule Wsserv do
     end
   end
 
+  def handle_cast({:send, opcode, data}, state = servstat(csock: csock)) do
+    Logger.debug "send message to client"
+    packet = encode_dataframe(data, %{opcode: opcode})
+    case opcode do
+      @opcode_text ->
+        :gen_tcp.send(csock, packet)
+        {:noreply, state}
+      @opcode_close ->
+        :gen_tcp.send(csock, packet)
+        {:stop, :close_request, state}
+      @opcode_pong ->
+        :gen_tcp.send(csock, packet)
+        {:noreply, state}
+    end
+  end
+
+
   ####################
   # Module functions #
   ####################
@@ -216,14 +240,45 @@ defmodule Wsserv do
     swkey <> @websocket_append_to_key |> (fn(k) -> :crypto.hash(:sha, k) end).() |> :base64.encode_to_string() |> List.to_string()
   end
 
-  defp encode_dataframe(data, opts = %{opcode: opcode, mask: mask}) do
-    dataByteSize = byte_size(data)
+  defp encode_dataframe(data, %{opcode: opcode, mask: mask}) do
     finRsvOpcode = Bitwise.bor(0b10000000, opcode)
+    {maskkey, newData} = apply_mask({mask, data})
+    _encode_dataframe(finRsvOpcode, maskkey, newData, 0b10000000)
   end
 
-  defp encode_dataframe(data, opts = %{opcode: opcode}) do
-    dataByteSize = byte_size(data)
+  defp encode_dataframe(data, %{opcode: opcode}) do
     finRsvOpcode = Bitwise.bor(0b10000000, opcode)
+    _encode_dataframe(finRsvOpcode, nil, data, 0b00000000)
+  end
+
+  defp _encode_dataframe(finRsvOpcode, nil, data, maskOnOffBits) do
+    dataSize = byte_size(data)
+    cond do
+      dataSize <= @payload_length_normal ->
+        maskPayloadLength = Bitwise.bor(maskOnOffBits, dataSize)
+        <<finRsvOpcode, maskPayloadLength, data :: binary>>
+      @payload_length_normal < dataSize and dataSize <= @payload_length_extend_16 ->
+        maskPayloadLength = Bitwise.bor(maskOnOffBits, @payload_length_extend_16)
+        <<finRsvOpcode, maskPayloadLength, data :: binary>>
+      @payload_length_extend_16 < dataSize and dataSize <= @payload_length_extend_64 ->
+        maskPayloadLength = Bitwise.bor(maskOnOffBits, @payload_length_extend_64)
+        <<finRsvOpcode, maskPayloadLength, data :: binary>>
+    end
+  end
+
+  defp _encode_dataframe(finRsvOpcode, maskkey, data, maskOnOffBits) do
+    dataSize = byte_size(data)
+    cond do
+      dataSize <= @payload_length_normal ->
+        maskPayloadLength = Bitwise.bor(maskOnOffBits, dataSize)
+        <<finRsvOpcode, maskPayloadLength, maskkey :: size(16), data :: binary>>
+      @payload_length_normal < dataSize and dataSize <= @payload_length_extend_16 ->
+        maskPayloadLength = Bitwise.bor(maskOnOffBits, @payload_length_extend_16)
+        <<finRsvOpcode, maskPayloadLength, maskkey :: size(16), data :: binary>>
+      @payload_length_extend_16 < dataSize and dataSize <= @payload_length_extend_64 ->
+        maskPayloadLength = Bitwise.bor(maskOnOffBits, @payload_length_extend_64)
+        <<finRsvOpcode, maskPayloadLength, maskkey :: size(16), data :: binary>>
+    end
   end
 
   defp decode_dataframe(rawmsg) do
@@ -353,13 +408,13 @@ defmodule Wsserv do
                         3 -> [msk1, msk2, msk3]
                         _ -> []
                       end
-    maskkeyList = [msk1, msk2, msk3, msk4] |> List.duplicate(msgsizetrun)
-                                           |> List.flatten(lastMaskkeyList)
+    maskkeyList = ([msk1, msk2, msk3, msk4] |> List.duplicate(msgsizetrun)
+                                            |> List.flatten()) ++ lastMaskkeyList
     remainmsgList = :binary.bin_to_list(remainmsg)
     IO.inspect({:remainmsgList, remainmsgList})
     IO.inspect({:maskkeyList, maskkeyList})
     valmaskeds = for {val, mask} <- List.zip([remainmsgList, maskkeyList]), do: Bitwise.bxor(val, mask)
-    maskedremainmsg = valmaskeds |> List.flatten(lastMaskkeyList) |> :binary.list_to_bin()
+    maskedremainmsg = valmaskeds |> :binary.list_to_bin()
     {maskkey, maskedremainmsg}
   end
 
