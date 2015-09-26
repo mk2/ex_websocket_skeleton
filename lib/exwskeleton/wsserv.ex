@@ -25,11 +25,6 @@ defmodule ExWebsocketSkeleton.Wsserv do
   + - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - +
   |                     Payload Data continued ...                |
   +---------------------------------------------------------------+
-
-  TODO List
-  - opcodeの分岐を追加
-   - pingの場合はwsserv内で処理、それ以外は基本handlerに知らせる
-  - decode_dataframeが常に動くようにする
   """
 
   @tag Atom.to_string(__MODULE__)
@@ -150,7 +145,6 @@ defmodule ExWebsocketSkeleton.Wsserv do
   end
 
   @doc """
-    メッセージ受け取りのエントリーポイント
   """
   def handle_info({:tcp_error, _, _}, state) do
     Logger.error "an error on tcp connection"
