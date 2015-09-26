@@ -259,6 +259,8 @@ defmodule ExWebsocketSkeleton.Wsserv do
       @payload_length_extend_16 < dataSize and dataSize <= @payload_length_extend_64 ->
         maskPayloadLength = Bitwise.bor(maskOnOffBits, @payload_length_extend_64)
         <<finRsvOpcode, maskPayloadLength, data :: binary>>
+      true ->
+        raise "not found proper payload length"
     end
   end
 
@@ -274,6 +276,8 @@ defmodule ExWebsocketSkeleton.Wsserv do
       @payload_length_extend_16 < dataSize and dataSize <= @payload_length_extend_64 ->
         maskPayloadLength = Bitwise.bor(maskOnOffBits, @payload_length_extend_64)
         <<finRsvOpcode, maskPayloadLength, maskkey :: size(16), data :: binary>>
+      true ->
+        raise "not found proper payload length"
     end
   end
 
@@ -366,7 +370,7 @@ defmodule ExWebsocketSkeleton.Wsserv do
                   pllen: payloadLen64,
                   data: remainmsg2,
                   msg: rawmsg)
-      true -> raise "unknown payload"
+      true -> raise "unknown payload length"
     end
   end
 
